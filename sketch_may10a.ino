@@ -7,8 +7,8 @@ const char* ssid = "SAR1979";      // Имя точки доступа
 const char* password = "998222619"; // Пароль от сети
 
 // Параметры Telegram бота
-const char* botToken = "ТВОЙ_ТОКЕН_БОТА"; // Уникальный токен вашего бота
-const char* chatId = "ТВОЙ_CHAT_ID";     // Ваш ID пользователя в Telegram
+const char* botToken = "8784895599:AAH3p1WyFzdNDdPO_ag3XnYD49CbSY09WqA"; // Уникальный токен вашего бота
+const char* chatId = "156112560";     // Ваш ID пользователя в Telegram
 
 // Инициализация защищенного клиента и бота
 WiFiClientSecure client;
