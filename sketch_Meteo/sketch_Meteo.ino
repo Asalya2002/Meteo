@@ -5,7 +5,7 @@
 
 // --- ОПРЕДЕЛЕНИЕ ПОРТОВ ---
 SoftwareSerial jwSerial(7, 8); // Порт для датчика качества воздуха JW01 (7 - RX, 8 - TX)
-SoftwareSerial telegramSerial(6, 11); // Связь с Wemos D1 Mini (IoT-шлюз)
+SoftwareSerial telegramSerial(6, 11); // Связь с Wemos D1 Mini (6 - RX, 11 - TX)
 
 const int PIN_MQ2 = A0; // Аналоговый вход для датчика газа и дыма
 const int PIN_BUZZER = 9; // Пин для звуковой сирены (зуммера)
@@ -24,6 +24,9 @@ Adafruit_BME280 bme;
 LiquidCrystal_I2C lcd(0x27, 16, 2); // Адрес дисплея 0x27, размер 16x2
 int air_clean_level = 0; // Переменная для хранения фонового значения чистого воздуха
 bool jwAlert = false;    // Флаг опасности от датчика JW01
+
+// Флаг-предохранитель против спама в Telegram (чтобы слать команду только ОДИН раз)
+bool alertSent = false; 
 
 void setup() {
   // Инициализация последовательных портов
@@ -74,14 +77,12 @@ void loop() {
   int gasVal = analogRead(PIN_MQ2); // Считываем уровень загазованности с MQ-2
 
   // --- ОБРАБОТКА ДАННЫХ С ДАТЧИКА JW01 ---
-  // Безопасный опрос: если датчик что-то шлет в порт — значит, он зафиксировал изменения (например, спирт)
+  // Безопасный опрос: очищаем буфер, чтобы плата не висла, и фиксируем активность
   jwAlert = false;
   if (jwSerial.available() > 0) {
-    // Очищаем буфер, чтобы плата не висла, и фиксируем активность датчика
     while(jwSerial.available() > 0) {
       char c = jwSerial.read();
     }
-    // Если пошел активный поток данных при тесте — активируем флаг
     jwAlert = true; 
   }
 
@@ -95,8 +96,7 @@ void loop() {
   // 3. АНАЛИЗ БЕЗОПАСНОСТИ И УПРАВЛЕНИЕ АВТОМАТИКОЙ (Нижняя строка)
   lcd.setCursor(0, 1);
   
-  // КОМБИНИРОВАННОЕ УСЛОВИЕ ТРЕВОГИ:
-  // Если MQ-2 превысил жесткий порог (230) ИЛИ если сработал датчик JW01
+  // КОМБИНИРОВАННОЕ УСЛОВИЕ ТРЕВОГИ
   if (gasVal > (air_clean_level + 80) || gasVal > ABSOLUTE_GAS_LIMIT || jwAlert == true) {
     
     // --- РЕЖИМ ТРЕВОГИ ---
@@ -108,8 +108,11 @@ void loop() {
     digitalWrite(PIN_RED, HIGH);
     digitalWrite(PIN_GREEN, LOW);
     
-    // Отправляем командный маркер на Wemos D1 Mini для отправки уведомления в Telegram
-    telegramSerial.println("ALERT_GAS");
+    // Защита от спама: отправляем маркер на Wemos ТОЛЬКО один раз при фиксации аварии
+    if (!alertSent) {
+      telegramSerial.println("ALERT_GAS"); 
+      alertSent = true; 
+    }
   }
   else {
     // --- ШТАТНЫЙ РЕЖИМ ---
@@ -120,6 +123,12 @@ void loop() {
     // Цветовая индикация статуса: ЗЕЛЕНЫЙ
     digitalWrite(PIN_RED, LOW);
     digitalWrite(PIN_GREEN, HIGH);
+
+    // Защита от спама: отправляем сброс на Wemos ТОЛЬКО один раз, когда всё очистилось
+    if (alertSent) {
+      telegramSerial.println("OK_GAS"); 
+      alertSent = false; 
+    }
   }
 
   // Вывод текущих показаний в Монитор порта для отладки
