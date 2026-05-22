@@ -7,7 +7,7 @@
 SoftwareSerial jwSerial(7, 8); // Порт для датчика качества воздуха JW01 (7 - RX, 8 - TX)
 SoftwareSerial telegramSerial(6, 11); // Связь с Wemos D1 Mini (6 - RX, 11 - TX)
 
-const int PIN_MQ2 = A0; // Аналоговый вход для датчика газа и дыма
+const int PIN_MQ2 = A2; // Аналоговый вход для датчика газа
 const int PIN_BUZZER = 9; // Пин для звуковой сирены (зуммера)
 const int PIN_RELAY = 2; // Пин для управления модулем реле
 
@@ -17,20 +17,20 @@ const int PIN_GREEN = 4; // Зеленый канал (Норма)
 const int PIN_BLUE = 5; // Синий канал
 
 // --- НАСТРОЙКА ПОРОГОВ БЕЗОПАСНОСТИ ---
-const int ABSOLUTE_GAS_LIMIT = 230; // Аварийный порог для MQ-2 
+const int ABSOLUTE_GAS_LIMIT = 230; // Аварийный порог для MQ-2
 
 // --- ОБЪЕКТЫ И ПЕРЕМЕННЫЕ ---
 Adafruit_BME280 bme;
 LiquidCrystal_I2C lcd(0x27, 16, 2); // Адрес дисплея 0x27, размер 16x2
 int air_clean_level = 0; // Переменная для хранения фонового значения чистого воздуха
-bool jwAlert = false;    // Флаг опасности от датчика JW01
+bool jwAlert = false;    // Настоящий флаг опасности от датчика JW01
 
-// Флаг-предохранитель против спама в Telegram (чтобы слать команду только ОДИН раз)
+// Флаг-предохранитель против спама в Telegram
 bool alertSent = false; 
 
 void setup() {
   // Инициализация последовательных портов
-  Serial.begin(9600); // Монитор порта для отладки в ПК
+  Serial.begin(9600); // Монитор порта для отладки
   jwSerial.begin(9600); // Чтение данных с JW01
   telegramSerial.begin(9600); // Передача команд в Telegram (через Wemos)
   
@@ -56,7 +56,7 @@ void setup() {
     Serial.println("Ошибка BME280! Проверьте подключение.");
   }
   
-  // Автоматическая калибровка MQ-2 (берем среднее значение за 1 секунду)
+  // Автоматическая калибровка MQ-2 (сразу снимаем среднее значение за 1 секунду)
   long sum = 0;
   for(int i = 0; i < 10; i++) {
     sum += analogRead(PIN_MQ2);
@@ -64,9 +64,10 @@ void setup() {
   }
   air_clean_level = sum / 10; // Устанавливаем текущий уровень воздуха как "норму"
   
+  // Сразу пишем, что система готова
   lcd.setCursor(0, 0);
-  lcd.print("SYSTEM READY");
-  delay(2000);
+  lcd.print("SYSTEM READY    ");
+  delay(1500);
 }
 
 void loop() {
@@ -74,16 +75,22 @@ void loop() {
   float temp = bme.readTemperature(); // Получаем температуру
   float hum = bme.readHumidity(); // Получаем влажность
   float pres = bme.readPressure() * 0.00750062; // Перевод давления в мм рт.ст.
-  int gasVal = analogRead(PIN_MQ2); // Считываем уровень загазованности с MQ-2
+  int gasVal = analogRead(PIN_MQ2); // Считываем уровень загазованности с MQ-2 (Пин А2)
 
-  // --- ОБРАБОТКА ДАННЫХ С ДАТЧИКА JW01 ---
-  // Безопасный опрос: очищаем буфер, чтобы плата не висла, и фиксируем активность
-  jwAlert = false;
-  if (jwSerial.available() > 0) {
-    while(jwSerial.available() > 0) {
-      char c = jwSerial.read();
+  // --- КОРРЕКТНАЯ ОБРАБОТКА ДАННЫХ С ДАТЧИКА JW01 ---
+  jwAlert = false; 
+  if (jwSerial.available() >= 7) { // JW01 присылает данные пакетами по 7 байт
+    byte buffer[7];
+    for (int i = 0; i < 7; i++) {
+      buffer[i] = jwSerial.read();
     }
-    jwAlert = true; 
+    
+    // Проверяем контрольные байты протокола JW01
+    if (buffer[0] == 0xAA) {
+      if (buffer[3] >= 0x03) {
+        jwAlert = true; 
+      }
+    }
   }
 
   // 2. ВЫВОД КЛИМАТИЧЕСКИХ ДАННЫХ НА LCD (Верхняя строка)
@@ -101,14 +108,12 @@ void loop() {
     
     // --- РЕЖИМ ТРЕВОГИ ---
     lcd.print("AIR: DANGER!    ");
-    digitalWrite(PIN_BUZZER, HIGH); // Активируем звуковую сирену
-    digitalWrite(PIN_RELAY, HIGH); // Включаем реле аварийной вентиляции
+    digitalWrite(PIN_BUZZER, HIGH); 
+    digitalWrite(PIN_RELAY, HIGH); 
     
-    // Цветовая индикация статуса: КРАСНЫЙ
     digitalWrite(PIN_RED, HIGH);
     digitalWrite(PIN_GREEN, LOW);
     
-    // Защита от спама: отправляем маркер на Wemos ТОЛЬКО один раз при фиксации аварии
     if (!alertSent) {
       telegramSerial.println("ALERT_GAS"); 
       alertSent = true; 
@@ -117,24 +122,22 @@ void loop() {
   else {
     // --- ШТАТНЫЙ РЕЖИМ ---
     lcd.print("AIR: CLEAN      ");
-    digitalWrite(PIN_BUZZER, LOW); // Отключаем сирену
-    digitalWrite(PIN_RELAY, LOW); // Выключаем реле
+    digitalWrite(PIN_BUZZER, LOW); 
+    digitalWrite(PIN_RELAY, LOW); 
     
-    // Цветовая индикация статуса: ЗЕЛЕНЫЙ
     digitalWrite(PIN_RED, LOW);
     digitalWrite(PIN_GREEN, HIGH);
 
-    // Защита от спама: отправляем сброс на Wemos ТОЛЬКО один раз, когда всё очистилось
     if (alertSent) {
       telegramSerial.println("OK_GAS"); 
       alertSent = false; 
     }
   }
 
-  // Вывод текущих показаний в Монитор порта для отладки
-  Serial.print("MQ-2: "); Serial.print(gasVal);
-  Serial.print(" | JW01 Status: "); Serial.println(jwAlert ? "ACTIVE" : "IDLE");
+  // Вывод в Монитор порта
+  Serial.print("MQ-2 (A2): "); Serial.print(gasVal);
+  Serial.print(" | Base Clean: "); Serial.print(air_clean_level);
+  Serial.print(" | JW01 Alert: "); Serial.println(jwAlert ? "DANGER" : "OK");
 
-  // Стабилизация вывода на экран
   delay(1500);
 }
